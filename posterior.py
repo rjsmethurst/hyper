@@ -44,6 +44,23 @@ print 'loading...'
 nuv_pred = N.load('nuv_look_up_ssfr.npy')
 ur_pred = N.load('ur_look_up_ssfr.npy')
 lu = N.append(nuv_pred.reshape(-1,1), ur_pred.reshape(-1,1), axis=1)
+age = 12.8
+a = N.searchsorted(ages, age)
+b = N.array([a-1, a])
+print 'compressing down...'
+g = grid[N.where(N.logical_or(grid[:,0]==ages[b[0]], grid[:,0]==ages[b[1]]))]
+values = lu[N.where(N.logical_or(grid[:,0]==ages[b[0]], grid[:,0]==ages[b[1]]))]
+print 'interpolating function, bear with...'
+f = LinearNDInterpolator(g, values, fill_value=(-N.inf))
+print 'working for age...'
+look = f(age, grid[:10000, 1], grid[:10000, 2])
+print '2D for nuv..'
+lunuv = look[:,0].reshape(100,100)
+v = interp2d(tq, tau, lunuv)
+print '2D for ur...'
+luur = look[:,1].reshape(100,100)
+u = interp2d(tq, tau, luur)
+print 'go go go ...'
 
 
 # Function which given a tau and a tq calculates the sfr at all times
@@ -292,8 +309,8 @@ def lnprob(theta, w, ur, sigma_ur, nuvu, sigma_nuvu, age, pd, ps):
         """
     global n
     n+=1
-    if n %1000 == 0:
-        print 'step number', n/100
+    #if n %1000 == 0:
+    #print 'step number', n/100
     lp = lnprior(w, theta)
     if not N.isfinite(lp):
         return -N.inf
@@ -303,7 +320,7 @@ def sample(ndim, nwalkers, nsteps, burnin, start, w, ur, sigma_ur, nuvu, sigma_n
     """ Function to implement the emcee EnsembleSampler function for the sample of galaxies input. Burn in is run and calcualted fir the length specified before the sampler is reset and then run for the length of steps specified. 
         
         :ndim:
-        The number of parameters in the model that emcee must find. In this case it always 4 with tqs, taus, tqd, taud.
+        The number of parameters in the model that emcee must find. In this case it always 2 with tq, tau.
         
         :nwalkers:
         The number of walkers that step around the parameter space. Must be an even integer number larger than ndim. 
@@ -350,24 +367,7 @@ def sample(ndim, nwalkers, nsteps, burnin, start, w, ur, sigma_ur, nuvu, sigma_n
         """
 #    if len(age) != len(ur):
 #        raise SystemExit('Number of ages does not coincide with number of galaxies...')
-    global u
-    global v
-    a = N.searchsorted(ages, age)
-    b = N.array([a-1, a])
-    print 'compressing down...'
-    g = grid[N.where(N.logical_or(grid[:,0]==ages[b[b]], grid[:,0==ages[b[1]]]))]
-    values = lu[N.where(N.logical_or(grid[:,0]==ages[b[b]], grid[:,0==ages[b[1]]]))]
-    print 'interpolating function, bear with...'
-    f = LinearNDInterpolator(g, values, fill_value=(-N.inf))
-    print 'working for age...'
-    look = f(age, grid[:10000, 1], grid[:10000, 2])
-    print '2D for nuv..'
-    lunuv = look[:,0].reshape(100,100)
-    v = interp2d(tq, tau, lunuv)
-    print '2D for ur...'
-    luur = look[:,1].reshape(100,100)
-    u = interp2d(tq, tau, luur)
-    print 'go go go ...'
+
     p0 = [start + 1e-4*N.random.randn(ndim) for i in range(nwalkers)]
     sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=2, args=(w, ur, sigma_ur, nuvu, sigma_nuvu, age, pd, ps))
     # burn in run 
@@ -426,7 +426,7 @@ def walker_plot(samples, nwalkers, limit, dr7):
     fig.savefig(save_fig)
     return fig
 
-def corner_plot(s, labels, extents, bf, dr7):
+def corner_plot(s, labels, extents, bf, dr7, truth):
     """ Plotting function to visualise the gaussian peaks found by the sampler function. 2D contour plots of tq against tau are plotted along with kernelly smooth histograms for each parameter.
         
         :s:
@@ -440,6 +440,8 @@ def corner_plot(s, labels, extents, bf, dr7):
         
         :bf:
         Best fit values for the distribution peaks in both tq and tau found from mapping the samples. List shape [(tq, poserrtq, negerrtq), (tau, poserrtau, negerrtau)]
+        :truth:
+        Known t and tau values - generally for test data
         
         RETURNS:
         :fig:
@@ -451,8 +453,10 @@ def corner_plot(s, labels, extents, bf, dr7):
     ax2.set_xlabel(labels[0])
     ax2.set_ylabel(labels[1])
     triangle.hist2d(x, y, ax=ax2, bins=100, extent=extents, plot_contours=True)
-    ax2.axvline(x=bf[0][0], linewidth=1)
-    ax2.axhline(y=bf[1][0], linewidth=1)
+#    ax2.axvline(x=bf[0][0], linewidth=1)
+#    ax2.axhline(y=bf[1][0], linewidth=1)
+    ax2.axvline(x=truth[0], c='r', linewidth=1)
+    ax2.axhline(y=truth[1], c='r', linewidth=1)
     [l.set_rotation(45) for l in ax2.get_xticklabels()]
     [j.set_rotation(45) for j in ax2.get_yticklabels()]
     ax2.tick_params(axis='x', labeltop='off')
@@ -461,10 +465,11 @@ def corner_plot(s, labels, extents, bf, dr7):
     den = kde.gaussian_kde(x[N.logical_and(x>=extents[0][0], x<=extents[0][1])])
     pos = N.linspace(extents[0][0], extents[0][1], 750)
     ax1.plot(pos, den(pos), 'k-', linewidth=1)
-    ax1.axvline(x=bf[0][0], linewidth=1)
-    ax1.axvline(x=bf[0][0]+bf[0][1], c='b', linestyle='--')
-    ax1.axvline(x=bf[0][0]-bf[0][2], c='b', linestyle='--')
+#    ax1.axvline(x=bf[0][0], linewidth=1)
+#    ax1.axvline(x=bf[0][0]+bf[0][1], c='b', linestyle='--')
+#    ax1.axvline(x=bf[0][0]-bf[0][2], c='b', linestyle='--')
     ax1.set_xlim(extents[0][0], extents[0][1])
+    ax1.axvline(x=truth[0], c='r', linewidth=1)
     #    ax12 = ax1.twiny()
     #    ax12.set_xlim((extent[0][0], extent[0][1])
     #ax12.set_xticks(N.array([1.87, 3.40, 6.03, 8.77, 10.9, 12.5]))
@@ -481,10 +486,11 @@ def corner_plot(s, labels, extents, bf, dr7):
     den = kde.gaussian_kde(y[N.logical_and(y>=extents[1][0], y<=extents[1][1])])
     pos = N.linspace(extents[1][0], extents[1][1], 750)
     ax3.plot(den(pos), pos, 'k-', linewidth=1)
-    ax3.axhline(y=bf[1][0], linewidth=1)
-    ax3.axhline(y=bf[1][0]+bf[1][1], c='b', linestyle='--')
-    ax3.axhline(y=bf[1][0]-bf[1][2], c='b', linestyle='--')
+#    ax3.axhline(y=bf[1][0], linewidth=1)
+#    ax3.axhline(y=bf[1][0]+bf[1][1], c='b', linestyle='--')
+#    ax3.axhline(y=bf[1][0]-bf[1][2], c='b', linestyle='--')
     ax3.set_ylim(extents[1][0], extents[1][1])
+    ax3.axhline(y=truth[1], c='r', linewidth=1)
     if os.path.exists(str(int(dr7))+'.jpeg') == True:
         ax4 = P.subplot2grid((3,3), (0,2), rowspan=1, colspan=1)
         img = mpimg.imread(str(int(dr7))+'.jpeg')
